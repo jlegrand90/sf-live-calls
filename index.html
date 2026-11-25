@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SF Live Calls</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#050a08;
+    --panel:#0a1310;
+    --panel2:#0d1815;
+    --line:#1c2b25;
+    --phosphor:#3dffa0;
+    --phosphor-dim:#1e7a4f;
+    --amber:#ffb020;
+    --amber-dim:#8a5c0e;
+    --red:#ff5252;
+    --red-dim:#8a2626;
+    --text:#c9ede0;
+    --text-dim:#5f8577;
+    --mono:'JetBrains Mono',monospace;
+    --sans:'IBM Plex Sans',sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;height:100%;background:var(--bg);color:var(--text);font-family:var(--sans);overflow:hidden;}
+  #app{display:flex;flex-direction:column;height:100vh;}
+
+  #topbar{
+    display:flex;align-items:center;gap:16px;
+    padding:10px 16px;background:var(--panel);
+    border-bottom:1px solid var(--line);
+    flex-wrap:wrap;
+  }
+  #topbar h1{
+    font-family:var(--mono);font-size:15px;font-weight:700;
+    letter-spacing:0.5px;color:var(--phosphor);margin:0;white-space:nowrap;
+  }
+  .dot{
+    width:8px;height:8px;border-radius:50%;background:var(--phosphor);
+    box-shadow:0 0 6px var(--phosphor);animation:pulse 1.6s infinite;flex-shrink:0;
+  }
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.25;}}
+  #meta{font-family:var(--mono);font-size:11px;color:var(--text-dim);white-space:nowrap;}
+  #meta b{color:var(--text);font-weight:500;}
+
+  .tab{
+    font-family:var(--mono);font-size:11px;font-weight:500;padding:6px 14px;
+    background:transparent;border:1px solid var(--line);color:var(--text-dim);
+    cursor:pointer;border-radius:3px;transition:all .15s;
+  }
+  .tab:hover{color:var(--text);border-color:var(--text-dim);}
+  .tab.on{background:var(--phosphor);color:var(--bg);border-color:var(--phosphor);font-weight:700;}
+  #tabs{display:flex;gap:4px;}
+
+  .filters{display:flex;gap:6px;margin-left:auto;flex-wrap:wrap;align-items:center;}
+  .time-filters{margin-left:0;}
+  #searchInput{
+    font-family:var(--mono);font-size:11px;padding:6px 9px;width:190px;
+    color:var(--text);background:var(--panel2);border:1px solid var(--line);
+    border-radius:3px;outline:none;
+  }
+  #searchInput:focus{border-color:var(--phosphor-dim);}
+  #searchInput::placeholder{color:var(--text-dim);}
+  .chip{
+    font-family:var(--mono);font-size:11px;padding:5px 10px;border-radius:3px;
+    border:1px solid var(--line);background:var(--panel2);color:var(--text-dim);
+    cursor:pointer;user-select:none;white-space:nowrap;transition:all .15s;
+  }
+  .chip.on{color:var(--bg);font-weight:700;}
+  .chip[data-time].on{background:var(--text);border-color:var(--text);}
+  .chip[data-p="A"].on{background:var(--red);border-color:var(--red);}
+  .chip[data-p="B"].on{background:var(--amber);border-color:var(--amber);}
+  .chip[data-p="C"].on{background:var(--phosphor);border-color:var(--phosphor);}
+  #refreshBtn{
+    font-family:var(--mono);font-size:11px;padding:5px 10px;border-radius:3px;
+    border:1px solid var(--phosphor-dim);background:transparent;color:var(--phosphor);
+    cursor:pointer;
+  }
+  #refreshBtn:hover{background:rgba(61,255,160,0.1);}
+
+  #main{flex:1;display:flex;min-height:0;}
+  #map{flex:1;background:#08110d;}
+  #sidebar{
+    width:340px;flex-shrink:0;background:var(--panel);
+    border-left:1px solid var(--line);display:flex;flex-direction:column;
+  }
+  #sidebar h2{
+    font-family:var(--mono);font-size:11px;letter-spacing:1px;
+    color:var(--text-dim);margin:0;padding:10px 14px;
+    border-bottom:1px solid var(--line);
+  }
+  #calllog{flex:1;overflow-y:auto;}
+  .call{
+    padding:10px 14px;border-bottom:1px solid var(--line);cursor:pointer;
+    transition:background .1s;
+  }
+  .call:hover{background:var(--panel2);}
+  .call.is-new{background:rgba(61,255,160,0.07);border-left:3px solid var(--phosphor);padding-left:11px;}
+  .new-badge{
+    display:inline-block;font-family:var(--mono);font-size:9px;font-weight:700;
+    color:var(--phosphor);border:1px solid var(--phosphor-dim);padding:0 4px;
+    border-radius:2px;margin-left:6px;vertical-align:1px;
+  }
+  .leaflet-interactive.new-call{animation:newCallPulse 1.2s ease-in-out 5;}
+  @keyframes newCallPulse{0%,100%{stroke-width:1;fill-opacity:.55;}50%{stroke-width:4;fill-opacity:1;}}
+  .call-top{display:flex;justify-content:space-between;align-items:baseline;gap:8px;}
+  .call-type{font-size:13px;font-weight:500;color:var(--text);}
+  .call-prio{
+    font-family:var(--mono);font-size:10px;font-weight:700;padding:1px 6px;border-radius:2px;flex-shrink:0;
+  }
+  .call-prio.A{background:rgba(255,82,82,0.15);color:var(--red);}
+  .call-prio.B{background:rgba(255,176,32,0.15);color:var(--amber);}
+  .call-prio.C{background:rgba(61,255,160,0.15);color:var(--phosphor);}
+  .call-meta{font-family:var(--mono);font-size:10.5px;color:var(--text-dim);margin-top:3px;}
+
+  .leaflet-popup-content-wrapper{
+    background:var(--panel2);color:var(--text);border-radius:4px;
+    font-family:var(--sans);border:1px solid var(--line);
+  }
+  .leaflet-popup-tip{background:var(--panel2);}
+  .leaflet-popup-content{margin:10px 12px;font-size:12.5px;}
+  .pop-type{font-weight:500;font-size:13.5px;margin-bottom:4px;}
+  .pop-row{font-family:var(--mono);font-size:11px;color:var(--text-dim);margin-top:2px;}
+  .leaflet-container a.leaflet-popup-close-button{color:var(--text-dim);}
+
+  #footer{
+    font-family:var(--mono);font-size:10px;color:var(--text-dim);
+    padding:6px 14px;border-top:1px solid var(--line);background:var(--panel);
+  }
+  #status{font-family:var(--mono);font-size:11px;color:var(--text-dim);padding:24px;text-align:center;}
+  #updated{font-family:var(--mono);font-size:10px;color:var(--text-dim);white-space:nowrap;}
+
+  ::-webkit-scrollbar{width:8px;}
+  ::-webkit-scrollbar-track{background:var(--panel);}
+  ::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px;}
+
+  @media (max-width:760px){
+    #sidebar{width:260px;}
+    #topbar h1{font-size:13px;}
+    #searchInput{width:150px;}
+    #updated{display:none;}
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="topbar">
+    <div class="dot"></div>
+    <h1>SF LIVE CALLS</h1>
+    <div id="mode" style="font-family:var(--mono);font-size:10.5px;padding:2px 8px;border-radius:3px;white-space:nowrap;"></div>
+    <div id="meta">loading&hellip;</div>
+    <div id="tabs">
+      <button class="tab on" data-tab="police">POLICE</button>
+      <button class="tab" data-tab="fire">FIRE</button>
+      <button class="tab" data-tab="alerts">ALERTS</button>
+    </div>
+    <div class="filters time-filters" aria-label="Time range">
+      <button class="chip on" data-time="60">1h</button>
+      <button class="chip" data-time="360">6h</button>
+      <button class="chip" data-time="1440">24h</button>
+      <button class="chip" data-time="all">48h</button>
+    </div>
+    <input id="searchInput" type="search" placeholder="Search area or call type" aria-label="Search neighborhood or call type">
+    <div id="updated" role="status">not updated yet</div>
+    <div class="filters" aria-label="Priority filters">
+      <button class="chip on" data-p="A" aria-pressed="true">A &middot; urgent</button>
+      <button class="chip on" data-p="B" aria-pressed="true">B &middot; standard</button>
+      <button class="chip on" data-p="C" aria-pressed="true">C &middot; low</button>
+      <button id="refreshBtn">&#8635; refresh</button>
+    </div>
+  </div>
+  <div id="main">
+    <div id="map"></div>
+    <div id="sidebar">
+      <h2>RECENT CALLS</h2>
+      <div id="calllog"><div id="status">connecting to DataSF feed&hellip;</div></div>
+    </div>
+  </div>
+  <div id="footer">
+    Source: DataSF &mdash; Law Enforcement Dispatched Calls for Service (Real-Time). 10-min delay, rolling 48h window. Locations are geo-masked to nearest intersection; calls flagged sensitive are withheld. Not an emergency service &mdash; call 911 for emergencies.
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+const POLICE_API = "https://data.sf.gov/resource/gnap-fj3t.json?$where=intersection_point IS NOT NULL AND sensitive_call='false'&$order=received_datetime DESC&$limit=400";
+const FIRE_API = "https://data.sf.gov/resource/nuek-vuh3.json?$where=case_location IS NOT NULL&$order=received_dttm DESC&$limit=400";
+const ALERTS_API = "https://api.weather.gov/alerts/active?zone=CAZ506";
+
+let activeTab = 'police';
+
+const SNAPSHOT = [{"received_datetime":"2026-09-12T20:58:03.000","priority_final":"C","call_type_final_desc":"SUSPICIOUS VEHICLE","analysis_neighborhood":"South of Market","police_district":"SOUTHERN","disposition":"ADV","lat":37.78229614,"lon":-122.405931328},{"received_datetime":"2026-09-12T18:12:17.000","priority_final":"A","call_type_final_desc":"MEET W/CITY EMPLOYEE","analysis_neighborhood":"South of Market","police_district":"SOUTHERN","disposition":"ND","lat":37.779211685,"lon":-122.410936574},{"received_datetime":"2026-09-12T17:33:24.000","priority_final":"C","call_type_final_desc":"AIDED CASE","analysis_neighborhood":"Hayes Valley","police_district":"NORTHERN","disposition":"HAN","lat":37.775997143,"lon":-122.426167393},{"received_datetime":"2026-09-12T17:17:32.000","priority_final":"A","call_type_final_desc":"INJURY VEH ACCIDENT","analysis_neighborhood":"Financial District/South Beach","police_district":"SOUTHERN","disposition":"REP","lat":37.785963991,"lon":-122.39723446},{"received_datetime":"2026-09-12T17:06:35.000","priority_final":"B","call_type_final_desc":"WELL BEING CHECK","analysis_neighborhood":"Glen Park","police_district":"INGLESIDE","disposition":"UTL","lat":37.734507816,"lon":-122.433879093},{"received_datetime":"2026-09-12T15:33:07.000","priority_final":"C","call_type_final_desc":"TRESPASSER","analysis_neighborhood":"South of Market","police_district":"SOUTHERN","disposition":"GOA","lat":37.782024267,"lon":-122.401159718},{"received_datetime":"2026-09-12T14:33:15.000","priority_final":"A","call_type_final_desc":"ASSAULT / BATTERY","analysis_neighborhood":"Lone Mountain/USF","police_district":"PARK","disposition":"REP","lat":37.776016592,"lon":-122.444779891},{"received_datetime":"2026-09-12T14:11:26.000","priority_final":"C","call_type_final_desc":"PETTY THEFT","analysis_neighborhood":"Financial District/South Beach","police_district":"CENTRAL","disposition":"HAN","lat":37.788499479,"lon":-122.406771144},{"received_datetime":"2026-09-12T13:06:17.000","priority_final":"A","call_type_final_desc":"ASSAULT / BATTERY","analysis_neighborhood":"Sunset/Parkside","police_district":"TARAVAL","disposition":"ND","lat":37.760424427,"lon":-122.505928111},{"received_datetime":"2026-09-12T12:20:03.000","priority_final":"C","call_type_final_desc":"STOLEN VEHICLE","analysis_neighborhood":"Excelsior","police_district":"INGLESIDE","disposition":"CAN","lat":37.720062806,"lon":-122.433985108},{"received_datetime":"2026-09-12T11:21:11.000","priority_final":"C","call_type_final_desc":"MEET W/CITIZEN","analysis_neighborhood":"Nob Hill","police_district":"NORTHERN","disposition":"HAN","lat":37.790788055,"lon":-122.419036211},{"received_datetime":"2026-09-12T10:46:38.000","priority_final":"A","call_type_final_desc":"ASSAULT / BATTERY","analysis_neighborhood":"Tenderloin","police_district":"CENTRAL","disposition":"NOM","lat":37.787200626,"lon":-122.416989832},{"received_datetime":"2026-09-12T10:33:37.000","priority_final":"C","call_type_final_desc":"TRAF VIOLATION CITE","analysis_neighborhood":"Mission","police_district":"MISSION","disposition":"CIT","lat":37.755699465,"lon":-122.414387601},{"received_datetime":"2026-09-12T09:49:40.000","priority_final":"C","call_type_final_desc":"TRAF VIOLATION TOW","analysis_neighborhood":"Castro/Upper Market","police_district":"MISSION","disposition":"ADV","lat":37.75942329,"lon":-122.432637769},{"received_datetime":"2026-09-12T07:33:15.000","priority_final":"A","call_type_final_desc":"MENTALLY DISTURBED","analysis_neighborhood":"Mission","police_district":"SOUTHERN","disposition":"UTL","lat":37.773523381,"lon":-122.421232156},{"received_datetime":"2026-09-12T07:30:39.000","priority_final":"B","call_type_final_desc":"VANDALISM","analysis_neighborhood":"Financial District/South Beach","police_district":"SOUTHERN","disposition":"GOA","lat":37.786378937,"lon":-122.395645467},{"received_datetime":"2026-09-12T04:53:44.000","priority_final":"B","call_type_final_desc":"WELL BEING CHECK","analysis_neighborhood":"Inner Richmond","police_district":"RICHMOND","disposition":"HAN","lat":37.783087442,"lon":-122.461207475},{"received_datetime":"2026-09-12T02:52:30.000","priority_final":"A","call_type_final_desc":"BURGLARY","analysis_neighborhood":"Marina","police_district":"NORTHERN","disposition":"PAS","lat":37.801016784,"lon":-122.439598337},{"received_datetime":"2026-09-12T01:44:28.000","priority_final":"A","call_type_final_desc":"WELL BEING CHECK","analysis_neighborhood":"Sunset/Parkside","police_district":"TARAVAL","disposition":"HAN","lat":37.744681183,"lon":-122.481181215},{"received_datetime":"2026-09-12T01:32:51.000","priority_final":"C","call_type_final_desc":"SUSPICIOUS PERSON","analysis_neighborhood":"McLaren Park","police_district":"INGLESIDE","disposition":"UTL","lat":37.716651402,"lon":-122.426847574},{"received_datetime":"2026-09-12T00:58:16.000","priority_final":"A","call_type_final_desc":"INJURY VEH ACCIDENT","analysis_neighborhood":"Outer Mission","police_district":"INGLESIDE","disposition":"HAN","lat":37.720724224,"lon":-122.44660865},{"received_datetime":"2026-09-11T23:48:41.000","priority_final":"A","call_type_final_desc":"DRUNK DRIVER","analysis_neighborhood":"Pacific Heights","police_district":"NORTHERN","disposition":"NOM","lat":37.790252063,"lon":-122.430736823},{"received_datetime":"2026-09-11T23:36:31.000","priority_final":"C","call_type_final_desc":"TRAF VIOLATION CITE","analysis_neighborhood":"Mission","police_district":"MISSION","disposition":"","lat":37.757100932,"lon":-122.417811899},{"received_datetime":"2026-09-11T23:30:11.000","priority_final":"C","call_type_final_desc":"NOISE NUISANCE","analysis_neighborhood":"Lakeshore","police_district":"TARAVAL","disposition":"ADV","lat":37.716177765,"lon":-122.484448205},{"received_datetime":"2026-09-11T22:57:44.000","priority_final":"A","call_type_final_desc":"FIGHT NO WEAPON","analysis_neighborhood":"North Beach","police_district":"CENTRAL","disposition":"HAN","lat":37.808214054,"lon":-122.415802425},{"received_datetime":"2026-09-11T22:23:27.000","priority_final":"A","call_type_final_desc":"BURGLARY","analysis_neighborhood":"Pacific Heights","police_district":"NORTHERN","disposition":"ND","lat":37.789836972,"lon":-122.434027089},{"received_datetime":"2026-09-11T20:21:40.000","priority_final":"B","call_type_final_desc":"WELL BEING CHECK","analysis_neighborhood":"South of Market","police_district":"SOUTHERN","disposition":"","lat":37.775602763,"lon":-122.403076401},{"received_datetime":"2026-09-11T19:39:36.000","priority_final":"A","call_type_final_desc":"PROWLER","analysis_neighborhood":"Pacific Heights","police_district":"NORTHERN","disposition":"HAN","lat":37.78974286,"lon":-122.427260407},{"received_datetime":"2026-09-11T18:15:36.000","priority_final":"A","call_type_final_desc":"MENTALLY DISTURBED","analysis_neighborhood":"Tenderloin","police_district":"TENDERLOIN","disposition":"UTL","lat":37.784349269,"lon":-122.40930918},{"received_datetime":"2026-09-11T17:48:07.000","priority_final":"C","call_type_final_desc":"BURGLARY","analysis_neighborhood":"Outer Richmond","police_district":"RICHMOND","disposition":"","lat":37.784222492,"lon":-122.477509349},{"received_datetime":"2026-09-11T15:54:39.000","priority_final":"C","call_type_final_desc":"TRAF VIOLATION CITE","analysis_neighborhood":"Pacific Heights","police_district":"NORTHERN","disposition":"CIT","lat":37.795853517,"lon":-122.430182832},{"received_datetime":"2026-09-11T15:11:03.000","priority_final":"B","call_type_final_desc":"PETTY THEFT","analysis_neighborhood":"Western Addition","police_district":"NORTHERN","disposition":"HAN","lat":37.789412062,"lon":-122.422135208},{"received_datetime":"2026-09-11T12:40:37.000","priority_final":"C","call_type_final_desc":"TRAF VIOLATION CITE","analysis_neighborhood":"Noe Valley","police_district":"INGLESIDE","disposition":"","lat":37.742630877,"lon":-122.431022327},{"received_datetime":"2026-09-11T12:26:07.000","priority_final":"C","call_type_final_desc":"TRAF VIOLATION CITE","analysis_neighborhood":"Inner Sunset","police_district":"PARK","disposition":"","lat":37.762362743,"lon":-122.461900573},{"received_datetime":"2026-09-11T12:11:48.000","priority_final":"B","call_type_final_desc":"FIGHT NO WEAPON","analysis_neighborhood":"Mission","police_district":"MISSION","disposition":"GOA","lat":37.76485895,"lon":-122.422853414},{"received_datetime":"2026-09-11T12:05:54.000","priority_final":"C","call_type_final_desc":"TRAF VIOLATION CITE","analysis_neighborhood":"Castro/Upper Market","police_district":"MISSION","disposition":"","lat":37.757753521,"lon":-122.433591092},{"received_datetime":"2026-09-11T11:02:05.000","priority_final":"A","call_type_final_desc":"BURGLARY","analysis_neighborhood":"Castro/Upper Market","police_district":"PARK","disposition":"NOM","lat":37.765727473,"lon":-122.435471953},{"received_datetime":"2026-09-11T10:49:29.000","priority_final":"C","call_type_final_desc":"SIT/LIE ENFORCEMENT","analysis_neighborhood":"Mission","police_district":"MISSION","disposition":"HAN","lat":37.760433261,"lon":-122.415928746},{"received_datetime":"2026-09-11T10:28:10.000","priority_final":"B","call_type_final_desc":"MEET W/CITY EMPLOYEE","analysis_neighborhood":"Mission","police_district":"MISSION","disposition":"HAN","lat":37.752204442,"lon":-122.419017543},{"received_datetime":"2026-09-11T10:19:47.000","priority_final":"C","call_type_final_desc":"STALKING","analysis_neighborhood":"Mission","police_district":"SOUTHERN","disposition":"HAN","lat":37.770610359,"lon":-122.414344256},{"received_datetime":"2026-09-11T08:16:23.000","priority_final":"A","call_type_final_desc":"FIGHT NO WEAPON","analysis_neighborhood":"Financial District/South Beach","police_district":"CENTRAL","disposition":"GOA","lat":37.787568025,"lon":-122.406589883},{"received_datetime":"2026-09-11T08:04:46.000","priority_final":"C","call_type_final_desc":"TRAF VIOLATION CITE","analysis_neighborhood":"Marina","police_district":"NORTHERN","disposition":"GOA","lat":37.799369724,"lon":-122.432580753},{"received_datetime":"2026-09-11T08:04:10.000","priority_final":"C","call_type_final_desc":"TRESPASSER","analysis_neighborhood":"Tenderloin","police_district":"TENDERLOIN","disposition":"HAN","lat":37.783723783,"lon":-122.414241573},{"received_datetime":"2026-09-11T06:25:35.000","priority_final":"B","call_type_final_desc":"FIGHT NO WEAPON","analysis_neighborhood":"South of Market","police_district":"SOUTHERN","disposition":"GOA","lat":37.783528917,"lon":-122.407482812},{"received_datetime":"2026-09-11T03:05:54.000","priority_final":"C","call_type_final_desc":"TRESPASSER","analysis_neighborhood":"Financial District/South Beach","police_district":"CENTRAL","disposition":"ADV","lat":37.788427262,"lon":-122.40357988},{"received_datetime":"2026-09-11T02:21:32.000","priority_final":"A","call_type_final_desc":"MENTALLY DISTURBED","analysis_neighborhood":"Japantown","police_district":"PARK","disposition":"HAN","lat":37.783308488,"lon":-122.439480381},{"received_datetime":"2026-09-10T22:52:38.000","priority_final":"A","call_type_final_desc":"BURGLARY","analysis_neighborhood":"Bernal Heights","police_district":"INGLESIDE","disposition":"UTL","lat":37.743351789,"lon":-122.406710926},{"received_datetime":"2026-09-10T21:25:01.000","priority_final":"A","call_type_final_desc":"ASSAULT / BATTERY","analysis_neighborhood":"Tenderloin","police_district":"TENDERLOIN","disposition":"NOM","lat":37.781863339,"lon":-122.413865604},{"received_datetime":"2026-09-10T20:32:12.000","priority_final":"B","call_type_final_desc":"FIGHT NO WEAPON","analysis_neighborhood":"Financial District/South Beach","police_district":"SOUTHERN","disposition":"UTL","lat":37.791716059,"lon":-122.398264448}].map(d => ({
+  priority_final: d.priority_final,
+  call_type_final_desc: d.call_type_final_desc,
+  analysis_neighborhood: d.analysis_neighborhood,
+  police_district: d.police_district,
+  disposition: d.disposition,
+  received_datetime: d.received_datetime,
+  intersection_point: { coordinates: [d.lon, d.lat] }
+}));
+
+const map = L.map('map', {zoomControl:true, attributionControl:true}).setView([37.7749,-122.4194], 13);
+L.tileLayer('https://tile.openstreetmap.de/{z}/{x}/{y}.png', {
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &middot; tiles: <a href="https://www.openstreetmap.de/">FOSSGIS</a>',
+  maxZoom: 18
+}).addTo(map);
+
+let markers = [];
+let calls = [];
+let activePrio = new Set(['A','B','C']);
+let activeTime = 60;
+let searchTerm = '';
+let previousCallKeys = null;
+let newCallKeys = new Set();
+let hasSuccessfulLoad = false;
+let isLoading = false;
+let lastUpdated = null;
+let feedIsLive = false;
+
+function callKey(c){
+  return [
+    c.call_number || '',
+    c.received_datetime || '',
+    c.call_type_final_desc || c.call_type_original_desc || '',
+    c.intersection_point ? c.intersection_point.coordinates.join(',') : ''
+  ].join('|');
+}
+
+function callDate(c){
+  return new Date(c.received_datetime.replace(' ','T'));
+}
+
+function escapeHTML(value){
+  return String(value).replace(/[&<>'"]/g, char => ({
+    '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;'
+  })[char]);
+}
+
+function searchMatches(c){
+  if(!searchTerm) return true;
+  const searchable = [
+    activeTab === 'fire' ? c.neighborhoods_analysis_boundaries : c.analysis_neighborhood,
+    activeTab === 'fire' ? c.call_type : (c.call_type_final_desc || c.call_type_original_desc),
+    activeTab === 'fire' ? c.address : c.police_district
+  ].filter(Boolean).join(' ').toLowerCase();
+  return searchable.includes(searchTerm);
+}
+
+function prioColor(p){
+  if(p==='A') return '#ff5252';
+  if(p==='B') return '#ffb020';
+  return '#3dffa0';
+}
+
+function relTime(dateStr){
+  const t = callDate({received_datetime:dateStr});
+  const diffMin = Math.max(0, Math.floor((Date.now() - t.getTime())/60000));
+  if(diffMin < 1) return 'just now';
+  if(diffMin < 60) return diffMin + 'm ago';
+  const h = Math.floor(diffMin/60);
+  if(h < 24) return h + 'h ' + (diffMin%60) + 'm ago';
+  return Math.floor(h/24) + 'd ago';
+}
+
+function clearMarkers(){
+  markers.forEach(m => map.removeLayer(m));
+  markers = [];
+}
+
+function getFilteredCalls(){
+  const cutoff = activeTime === 'all' ? 0 : Date.now() - activeTime * 60000;
+  return calls.filter(c => {
+    const prio = getCallPrio(c);
+    if(!activePrio.has(prio) || !searchMatches(c)) return false;
+    const d = activeTab === 'fire' ? c.received_dttm : c.received_datetime;
+    if(!d) return false;
+    if(callDate({received_datetime:d}).getTime() < cutoff) return false;
+    return true;
+  });
+}
+
+function getCallCoords(c){
+  if(activeTab === 'fire'){
+    if(!c.case_location || !c.case_location.coordinates) return null;
+    return [Number(c.case_location.coordinates[1]), Number(c.case_location.coordinates[0])];
+  }
+  if(!c.intersection_point || !c.intersection_point.coordinates) return null;
+  return [Number(c.intersection_point.coordinates[1]), Number(c.intersection_point.coordinates[0])];
+}
+
+function getCallDesc(c){
+  if(activeTab === 'fire') return c.call_type || 'Unknown incident';
+  return c.call_type_final_desc || c.call_type_original_desc || 'Unknown call';
+}
+
+function getCallNeigh(c){
+  if(activeTab === 'fire') return c.neighborhoods_analysis_boundaries || c.address || 'Unknown area';
+  return c.analysis_neighborhood || 'Unknown area';
+}
+
+function getCallPrio(c){
+  if(activeTab === 'fire'){
+    const p = (c.priority || '').toString();
+    if(p === '1' || p === '2') return 'A';
+    if(p === '3') return 'B';
+    return 'C';
+  }
+  return (c.priority_final || 'C').toUpperCase();
+}
+
+function getCallTime(c){
+  return activeTab === 'fire' ? c.received_dttm : c.received_datetime;
+}
+
+function getCallDisp(c){
+  if(activeTab === 'fire') return c.call_final_disposition || 'reported';
+  return c.disposition || 'open';
+}
+
+function getCallDistrict(c){
+  if(activeTab === 'fire') return c.battalion ? 'Battalion ' + c.battalion : '';
+  return c.police_district || '';
+}
+
+function render(){
+  clearMarkers();
+  const log = document.getElementById('calllog');
+  log.innerHTML = '';
+  const filtered = getFilteredCalls();
+
+  let shown = 0;
+  filtered.forEach(c => {
+    const prio = getCallPrio(c);
+    const coords = getCallCoords(c);
+    if(!coords || !Number.isFinite(coords[0]) || !Number.isFinite(coords[1])) return;
+    const [lat, lon] = coords;
+    shown++;
+    const isNew = newCallKeys.has(callKey(c));
+
+    const color = prioColor(prio);
+    const marker = L.circleMarker([lat,lon], {
+      radius: isNew ? (prio==='A' ? 9 : 7) : (prio==='A' ? 7 : 5),
+      fillColor: color, color: color,
+      weight: isNew ? 3 : 1,
+      fillOpacity: 0.55, opacity: 0.9,
+      className: isNew ? 'new-call' : ''
+    }).addTo(map);
+
+    const desc = getCallDesc(c);
+    const neigh = getCallNeigh(c);
+    const disp = getCallDisp(c);
+    const district = getCallDistrict(c);
+    const age = relTime(getCallTime(c));
+    marker.bindPopup(
+      '<div class="pop-type">' + escapeHTML(desc) + (isNew ? '<span class="new-badge">NEW</span>' : '') + '</div>' +
+      '<div class="pop-row">Priority ' + escapeHTML(prio) + ' &middot; ' + age + '</div>' +
+      '<div class="pop-row">' + escapeHTML(neigh) + (district ? ' &middot; ' + escapeHTML(district) : '') + '</div>' +
+      '<div class="pop-row">status: ' + escapeHTML(disp) + '</div>'
+    );
+    marker._callRef = c;
+    markers.push(marker);
+
+    if(shown <= 60){
+      const row = document.createElement('div');
+      row.className = 'call' + (isNew ? ' is-new' : '');
+      row.innerHTML =
+        '<div class="call-top"><div class="call-type">' + escapeHTML(desc) +
+        (isNew ? '<span class="new-badge">NEW</span>' : '') + '</div>' +
+        '<div class="call-prio ' + escapeHTML(prio) + '">' + escapeHTML(prio) + '</div></div>' +
+        '<div class="call-meta">' + escapeHTML(neigh) + ' &middot; ' + age + '</div>';
+      row.addEventListener('click', () => {
+        map.flyTo([lat,lon], 16, {duration:0.6});
+        marker.openPopup();
+      });
+      log.appendChild(row);
+    }
+  });
+
+  if(!shown){
+    log.innerHTML = '<div id="status">No calls match these filters.</div>';
+  }
+  const latest = filtered.length ? relTime(getCallTime(filtered[0])) : 'none';
+  const newCount = newCallKeys.size;
+  document.getElementById('meta').innerHTML =
+    '<b>' + shown + '</b> shown' + (newCount ? ' &middot; <b>' + newCount + ' new</b>' : '') +
+    ' &middot; latest <b>' + latest + '</b>';
+}
+
+function updateStatus(message){
+  document.getElementById('updated').textContent = message;
+}
+
+function setMode(live){
+  feedIsLive = live;
+  const el = document.getElementById('mode');
+  if(live){
+    el.textContent = 'LIVE';
+    el.style.background = 'rgba(61,255,160,0.15)';
+    el.style.color = 'var(--phosphor)';
+  }else{
+    el.textContent = hasSuccessfulLoad ? 'STALE' : 'SNAPSHOT';
+    el.style.background = 'rgba(255,176,32,0.15)';
+    el.style.color = 'var(--amber)';
+  }
+}
+
+function getApiUrl(){
+  if(activeTab === 'fire') return FIRE_API;
+  if(activeTab === 'alerts') return ALERTS_API;
+  return POLICE_API;
+}
+
+async function loadData(){
+  if(isLoading) return;
+  isLoading = true;
+  const btn = document.getElementById('refreshBtn');
+  btn.disabled = true;
+  btn.textContent = '\u21bb loading...';
+  updateStatus('refreshing feed...');
+  try{
+    const res = await fetch(getApiUrl(), {signal: AbortSignal.timeout(15000), cache:'no-store'});
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+
+    if(activeTab === 'alerts'){
+      calls = (data.features || []).map(f => ({
+        id: f.id,
+        event: f.properties.event,
+        severity: f.properties.severity,
+        headline: f.properties.headline,
+        description: f.properties.description,
+        instruction: f.properties.instruction,
+        effective: f.properties.effective,
+        expires: f.properties.expires,
+        areaDesc: f.properties.areaDesc,
+        // Alerts don't have coordinates, so we show them in sidebar only
+      }));
+      setMode(true);
+      renderAlerts();
+      updateStatus('updated ' + new Date().toLocaleTimeString([], {hour:'numeric', minute:'2-digit', second:'2-digit'}));
+      document.getElementById('footer').textContent =
+        'Source: National Weather Service. Active alerts for San Francisco (CAZ506). Not an emergency service. Call 911 for emergencies.';
+      return;
+    }
+
+    if(!Array.isArray(data)) throw new Error('Unexpected feed response');
+    const nextCalls = activeTab === 'fire'
+      ? data.filter(d => d.case_location && d.received_dttm)
+      : data.filter(d => d.intersection_point && d.received_datetime);
+    const currentKeys = new Set(nextCalls.map(callKey));
+    if(hasSuccessfulLoad && feedIsLive){
+      newCallKeys = new Set(nextCalls.filter(c => !previousCallKeys.has(callKey(c))).map(callKey));
+    }else{
+      newCallKeys = new Set();
+    }
+    previousCallKeys = currentKeys;
+    calls = nextCalls;
+    hasSuccessfulLoad = true;
+    lastUpdated = new Date();
+    setMode(true);
+    render();
+    updateStatus('updated ' + lastUpdated.toLocaleTimeString([], {hour:'numeric', minute:'2-digit', second:'2-digit'}));
+    document.getElementById('footer').innerHTML = activeTab === 'fire'
+      ? 'Source: SFFD Dispatched Calls for Service. Data is delayed and for historical reporting, not live dispatch. Not an emergency service. Call 911 for emergencies.'
+      : 'Source: DataSF &mdash; Law Enforcement Dispatched Calls for Service (Real-Time). 10-min delay, rolling 48h window. ' +
+        'Locations are geo-masked to nearest intersection; calls flagged sensitive are withheld. Not an emergency service &mdash; call 911 for emergencies.';
+  }catch(err){
+    setMode(false);
+    if(!hasSuccessfulLoad) calls = activeTab === 'fire' ? [] : SNAPSHOT;
+    if(activeTab === 'alerts'){
+      document.getElementById('calllog').innerHTML = '<div id="status">Failed to load alerts. Tap refresh.</div>';
+    }else{
+      render();
+    }
+    updateStatus('feed failed. Last good update ' + (lastUpdated ? lastUpdated.toLocaleTimeString([], {hour:'numeric', minute:'2-digit'}) : 'none'));
+    document.getElementById('footer').textContent =
+      'Live refresh failed (' + err.message + '). ' +
+      (hasSuccessfulLoad ? 'Showing the last successful live feed.' : 'Showing the embedded sample snapshot, not current activity.') +
+      ' Source: DataSF. Not an emergency service. Call 911 for emergencies.';
+  }finally{
+    isLoading = false;
+    btn.disabled = false;
+    btn.textContent = '\u21bb refresh';
+  }
+}
+
+function renderAlerts(){
+  const log = document.getElementById('calllog');
+  log.innerHTML = '';
+  if(!calls.length){
+    log.innerHTML = '<div id="status">No active alerts for San Francisco.</div>';
+    document.getElementById('meta').innerHTML = '<b>0</b> alerts';
+    return;
+  }
+  calls.forEach(alert => {
+    const row = document.createElement('div');
+    row.className = 'call';
+    const severity = alert.severity || 'Unknown';
+    const severityClass = severity === 'Extreme' || severity === 'Severe' ? 'A' : severity === 'Moderate' ? 'B' : 'C';
+    row.innerHTML =
+      '<div class="call-top"><div class="call-type">' + escapeHTML(alert.event || 'Alert') + '</div>' +
+      '<div class="call-prio ' + severityClass + '">' + escapeHTML(severity) + '</div></div>' +
+      '<div class="call-meta">' + escapeHTML(alert.headline || '').substring(0, 120) + '</div>';
+    row.style.cursor = 'default';
+    log.appendChild(row);
+  });
+  document.getElementById('meta').innerHTML = '<b>' + calls.length + '</b> active alerts';
+}
+
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    activeTab = tab.dataset.tab;
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t === tab));
+
+    // Reset state for new tab
+    calls = [];
+    markers.forEach(m => map.removeLayer(m));
+    markers = [];
+    newCallKeys = new Set();
+    hasSuccessfulLoad = false;
+    lastUpdated = null;
+    searchTerm = '';
+    document.getElementById('searchInput').value = '';
+
+    // Update UI for tab
+    const timeFilters = document.querySelector('.time-filters');
+    const priorityFilters = document.querySelector('.filters[aria-label="Priority filters"]');
+    const searchInput = document.getElementById('searchInput');
+
+    if(activeTab === 'alerts'){
+      timeFilters.style.display = 'none';
+      priorityFilters.style.display = 'none';
+      searchInput.style.display = 'none';
+      document.getElementById('sidebar').querySelector('h2').textContent = 'ACTIVE ALERTS';
+    }else{
+      timeFilters.style.display = 'flex';
+      priorityFilters.style.display = 'flex';
+      searchInput.style.display = 'block';
+      document.getElementById('sidebar').querySelector('h2').textContent = activeTab === 'fire' ? 'RECENT INCIDENTS' : 'RECENT CALLS';
+    }
+
+    loadData();
+  });
+});
+
+document.querySelectorAll('.chip[data-p]').forEach(chip => {
+  chip.addEventListener('click', () => {
+    const p = chip.dataset.p;
+    if(activePrio.has(p)){ activePrio.delete(p); chip.classList.remove('on'); }
+    else { activePrio.add(p); chip.classList.add('on'); }
+    chip.setAttribute('aria-pressed', activePrio.has(p));
+    render();
+  });
+});
+document.querySelectorAll('.chip[data-time]').forEach(chip => {
+  chip.addEventListener('click', () => {
+    activeTime = chip.dataset.time === 'all' ? 'all' : Number(chip.dataset.time);
+    document.querySelectorAll('.chip[data-time]').forEach(c => {
+      const selected = c === chip;
+      c.classList.toggle('on', selected);
+      c.setAttribute('aria-pressed', selected);
+    });
+    render();
+  });
+});
+document.getElementById('searchInput').addEventListener('input', event => {
+  searchTerm = event.target.value.trim().toLowerCase();
+  render();
+});
+document.getElementById('refreshBtn').addEventListener('click', loadData);
+
+loadData();
+setInterval(loadData, 60000);
+setInterval(() => {
+  render();
+  if(lastUpdated && !isLoading && feedIsLive){
+    updateStatus('updated ' + relTime(lastUpdated.toISOString()) + '. Refreshes every 60s');
+    newCallKeys = new Set();
+    render();
+  }
+}, 30000);
+
+</script>
+</body>
+</html>
