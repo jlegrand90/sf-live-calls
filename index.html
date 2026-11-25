@@ -210,6 +210,7 @@
     <div id="tabs">
       <button class="tab on" data-tab="police">POLICE</button>
       <button class="tab" data-tab="fire">FIRE</button>
+      <button class="tab" data-tab="311">311</button>
       <button class="tab" data-tab="alerts">ALERTS</button>
     </div>
     <div class="filters time-filters" aria-label="Time range">
@@ -243,6 +244,7 @@
 <script>
 const POLICE_API = "https://data.sf.gov/resource/gnap-fj3t.json?$where=intersection_point IS NOT NULL AND sensitive_call='false'&$order=received_datetime DESC&$limit=400";
 const FIRE_API = "https://data.sf.gov/resource/nuek-vuh3.json?$where=case_location IS NOT NULL&$order=received_dttm DESC&$limit=400";
+const SERVICE_API = "https://data.sf.gov/resource/vw6y-z8j6.json?$where=point_geom IS NOT NULL&$order=requested_datetime DESC&$limit=400";
 const ALERTS_API = "https://api.weather.gov/alerts/active?zone=CAZ506";
 
 let activeTab = 'police';
@@ -276,6 +278,8 @@ let lastUpdated = null;
 let feedIsLive = false;
 
 function callKey(c){
+  if(activeTab === '311') return c.service_request_id || [c.requested_datetime,c.address].join('|');
+  if(activeTab === 'fire') return c.rowid || [c.call_number,c.unit_id,c.received_dttm].join('|');
   return [
     c.call_number || '',
     c.received_datetime || '',
@@ -296,12 +300,15 @@ function escapeHTML(value){
 
 function searchMatches(c){
   if(!searchTerm) return true;
-  const searchable = [
-    activeTab === 'fire' ? c.neighborhoods_analysis_boundaries : c.analysis_neighborhood,
-    activeTab === 'fire' ? c.call_type : (c.call_type_final_desc || c.call_type_original_desc),
-    activeTab === 'fire' ? c.address : c.police_district
-  ].filter(Boolean).join(' ').toLowerCase();
-  return searchable.includes(searchTerm);
+  let fields;
+  if(activeTab === 'fire'){
+    fields = [c.neighborhoods_analysis_boundaries, c.call_type, c.address];
+  }else if(activeTab === '311'){
+    fields = [c.analysis_neighborhood, c.service_name, c.service_subtype, c.address, c.agency_responsible, c.status_description];
+  }else{
+    fields = [c.analysis_neighborhood, c.call_type_final_desc, c.call_type_original_desc, c.police_district];
+  }
+  return fields.filter(Boolean).join(' ').toLowerCase().includes(searchTerm);
 }
 
 function prioColor(p){
@@ -330,7 +337,7 @@ function getFilteredCalls(){
   return calls.filter(c => {
     const prio = getCallPrio(c);
     if(!activePrio.has(prio) || !searchMatches(c)) return false;
-    const d = activeTab === 'fire' ? c.received_dttm : c.received_datetime;
+    const d = getCallTime(c);
     if(!d) return false;
     if(callDate({received_datetime:d}).getTime() < cutoff) return false;
     return true;
@@ -342,17 +349,23 @@ function getCallCoords(c){
     if(!c.case_location || !c.case_location.coordinates) return null;
     return [Number(c.case_location.coordinates[1]), Number(c.case_location.coordinates[0])];
   }
+  if(activeTab === '311'){
+    if(!c.point_geom || !c.point_geom.coordinates) return null;
+    return [Number(c.point_geom.coordinates[1]), Number(c.point_geom.coordinates[0])];
+  }
   if(!c.intersection_point || !c.intersection_point.coordinates) return null;
   return [Number(c.intersection_point.coordinates[1]), Number(c.intersection_point.coordinates[0])];
 }
 
 function getCallDesc(c){
   if(activeTab === 'fire') return c.call_type || 'Unknown incident';
+  if(activeTab === '311') return c.service_name || 'Service request';
   return c.call_type_final_desc || c.call_type_original_desc || 'Unknown call';
 }
 
 function getCallNeigh(c){
   if(activeTab === 'fire') return c.neighborhoods_analysis_boundaries || c.address || 'Unknown area';
+  if(activeTab === '311') return c.analysis_neighborhood || c.neighborhoods_sffind_boundaries || 'Unknown area';
   return c.analysis_neighborhood || 'Unknown area';
 }
 
@@ -363,20 +376,25 @@ function getCallPrio(c){
     if(p === '3') return 'B';
     return 'C';
   }
+  if(activeTab === '311') return (c.status_description || '').toLowerCase() === 'open' ? 'B' : 'C';
   return (c.priority_final || 'C').toUpperCase();
 }
 
 function getCallTime(c){
-  return activeTab === 'fire' ? c.received_dttm : c.received_datetime;
+  if(activeTab === 'fire') return c.received_dttm;
+  if(activeTab === '311') return c.requested_datetime;
+  return c.received_datetime;
 }
 
 function getCallDisp(c){
   if(activeTab === 'fire') return c.call_final_disposition || 'reported';
+  if(activeTab === '311') return c.status_description || 'submitted';
   return c.disposition || 'open';
 }
 
 function getCallDistrict(c){
   if(activeTab === 'fire') return c.battalion ? 'Battalion ' + c.battalion : '';
+  if(activeTab === '311') return c.agency_responsible || 'SF 311';
   return c.police_district || '';
 }
 
@@ -409,9 +427,10 @@ function render(){
     const disp = getCallDisp(c);
     const district = getCallDistrict(c);
     const age = relTime(getCallTime(c));
+    const detailLabel = activeTab === '311' ? 'Status' : 'Priority';
     marker.bindPopup(
       '<div class="pop-type">' + escapeHTML(desc) + (isNew ? '<span class="new-badge">NEW</span>' : '') + '</div>' +
-      '<div class="pop-row">Priority ' + escapeHTML(prio) + ' &middot; ' + age + '</div>' +
+      '<div class="pop-row">' + detailLabel + ' ' + escapeHTML(prio) + ' &middot; ' + age + '</div>' +
       '<div class="pop-row">' + escapeHTML(neigh) + (district ? ' &middot; ' + escapeHTML(district) : '') + '</div>' +
       '<div class="pop-row">status: ' + escapeHTML(disp) + '</div>'
     );
@@ -464,6 +483,7 @@ function setMode(live){
 
 function getApiUrl(){
   if(activeTab === 'fire') return FIRE_API;
+  if(activeTab === '311') return SERVICE_API;
   if(activeTab === 'alerts') return ALERTS_API;
   return POLICE_API;
 }
@@ -502,9 +522,10 @@ async function loadData(){
     }
 
     if(!Array.isArray(data)) throw new Error('Unexpected feed response');
-    const nextCalls = activeTab === 'fire'
-      ? data.filter(d => d.case_location && d.received_dttm)
-      : data.filter(d => d.intersection_point && d.received_datetime);
+    let nextCalls;
+    if(activeTab === 'fire') nextCalls = data.filter(d => d.case_location && d.received_dttm);
+    else if(activeTab === '311') nextCalls = data.filter(d => d.point_geom && d.requested_datetime);
+    else nextCalls = data.filter(d => d.intersection_point && d.received_datetime);
     const currentKeys = new Set(nextCalls.map(callKey));
     if(hasSuccessfulLoad && feedIsLive){
       newCallKeys = new Set(nextCalls.filter(c => !previousCallKeys.has(callKey(c))).map(callKey));
@@ -518,13 +539,17 @@ async function loadData(){
     setMode(true);
     render();
     updateStatus('updated ' + lastUpdated.toLocaleTimeString([], {hour:'numeric', minute:'2-digit', second:'2-digit'}));
-    document.getElementById('footer').innerHTML = activeTab === 'fire'
-      ? 'Source: SFFD Dispatched Calls for Service. Data is delayed and for historical reporting, not live dispatch. Not an emergency service. Call 911 for emergencies.'
-      : 'Source: DataSF &mdash; Law Enforcement Dispatched Calls for Service (Real-Time). 10-min delay, rolling 48h window. ' +
+    if(activeTab === 'fire'){
+      document.getElementById('footer').textContent = 'Source: SFFD Dispatched Calls for Service. Data is delayed and for historical reporting, not live dispatch. Not an emergency service. Call 911 for emergencies.';
+    }else if(activeTab === '311'){
+      document.getElementById('footer').textContent = 'Source: DataSF 311 Cases. City service reports, not emergency calls. Publication may be delayed. Amber markers are open; green are closed. Call 911 for emergencies.';
+    }else{
+      document.getElementById('footer').innerHTML = 'Source: DataSF &mdash; Law Enforcement Dispatched Calls for Service (Real-Time). 10-min delay, rolling 48h window. ' +
         'Locations are geo-masked to nearest intersection; calls flagged sensitive are withheld. Not an emergency service &mdash; call 911 for emergencies.';
+    }
   }catch(err){
     setMode(false);
-    if(!hasSuccessfulLoad) calls = activeTab === 'fire' ? [] : SNAPSHOT;
+    if(!hasSuccessfulLoad) calls = activeTab === 'fire' || activeTab === '311' ? [] : SNAPSHOT;
     if(activeTab === 'alerts'){
       document.getElementById('calllog').innerHTML = '<div id="status">Failed to load alerts. Tap refresh.</div>';
     }else{
@@ -594,7 +619,9 @@ document.querySelectorAll('.tab').forEach(tab => {
       timeFilters.style.display = 'flex';
       priorityFilters.style.display = 'flex';
       searchInput.style.display = 'block';
-      document.getElementById('sidebar').querySelector('h2').textContent = activeTab === 'fire' ? 'RECENT INCIDENTS' : 'RECENT CALLS';
+      searchInput.placeholder = activeTab === '311' ? 'Search area or service' : 'Search area or call type';
+      document.getElementById('sidebar').querySelector('h2').textContent =
+        activeTab === 'fire' ? 'RECENT INCIDENTS' : activeTab === '311' ? 'SERVICE REPORTS' : 'RECENT CALLS';
     }
 
     loadData();
